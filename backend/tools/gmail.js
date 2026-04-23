@@ -2,9 +2,9 @@ const { google } = require('googleapis');
 const nodemailer = require('nodemailer');
 const { getAuthenticatedClient } = require('../auth/googleOAuth');
 
-async function sendEmail({ to, subject, body, cc }) {
+async function sendEmail({ to, subject, body, cc, userId }) {
   try {
-    const auth = await getAuthenticatedClient();
+    const auth = await getAuthenticatedClient(userId);
     const gmail = google.gmail({ version: 'v1', auth });
     const headerLines = [
       `To: ${to}`,
@@ -35,8 +35,8 @@ async function sendEmailSMTP({ to, subject, body, cc }) {
   return { success: true, message: `Email sent via SMTP to ${to}`, to, subject };
 }
 
-async function readEmails({ maxResults = 10, query = '' } = {}) {
-  const auth = await getAuthenticatedClient();
+async function readEmails({ maxResults = 10, query = '', userId } = {}) {
+  const auth = await getAuthenticatedClient(userId);
   const gmail = google.gmail({ version: 'v1', auth });
   const listRes = await gmail.users.messages.list({ userId: 'me', maxResults, q: query || 'is:inbox' });
   const messages = listRes.data.messages || [];

@@ -1,8 +1,8 @@
 const { google } = require('googleapis');
 const { getAuthenticatedClient } = require('../auth/googleOAuth');
 
-async function createMeeting({ title, startDateTime, endDateTime, attendees, description }) {
-  const auth = await getAuthenticatedClient();
+async function createMeeting({ title, startDateTime, endDateTime, attendees, description, userId }) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
   const attendeeList = attendees ? attendees.split(',').map(e => ({ email: e.trim() })) : [];
   const event = {

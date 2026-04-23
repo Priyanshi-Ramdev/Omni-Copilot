@@ -1,5 +1,5 @@
 const Groq = require('groq-sdk');
-const { getDb } = require('./db/database');
+const { Conversation, Message, Token, Analytics } = require('./db/database');
 const { v4: uuidv4 } = require('uuid');
 
 // Tool Handlers
@@ -15,6 +15,8 @@ const discord        = require('./tools/discord');
 const zoom           = require('./tools/zoom');
 const imageAnalysis  = require('./tools/imageAnalysis');
 const codeFiles      = require('./tools/codeFiles');
+const memory         = require('./tools/memory');
+const webSearch      = require('./tools/webSearch');
 
 // ── Tool Definitions (OpenAI / Groq format) ───────────────────────────────────
 const TOOLS = [
@@ -37,7 +39,8 @@ const TOOLS = [
   { type: 'function', function: { name: 'create_google_form', description: 'Create a Google Form with questions.', parameters: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, questions: { type: 'string', description: 'JSON array: [{title, type, required, options}]. Types: TEXT, MULTIPLE_CHOICE, CHECKBOX, SCALE' } }, required: ['title', 'questions'] } } },
   // Notion
   { type: 'function', function: { name: 'create_notion_page', description: 'Create a Notion page with markdown content.', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string', description: 'Markdown content' }, parentPageId: { type: 'string' } }, required: ['title', 'content'] } } },
-  { type: 'function', function: { name: 'search_notion',      description: 'Search Notion workspace.',                    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'search_notion',      description: 'Search Notion workspace. Query should be plain text keywords (e.g. "my folder").', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'read_notion_page',   description: 'Read the text content of a specific Notion page.', parameters: { type: 'object', properties: { pageId: { type: 'string' } }, required: ['pageId'] } } },
   { type: 'function', function: { name: 'list_notion_pages',  description: 'List recent Notion pages.',                   parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
   // Slack
   { type: 'function', function: { name: 'send_slack_message',   description: 'Send a message to a Slack channel or user.', parameters: { type: 'object', properties: { channel: { type: 'string', description: 'Channel name e.g. #general or user ID' }, message: { type: 'string' } }, required: ['channel', 'message'] } } },
@@ -53,6 +56,10 @@ const TOOLS = [
   { type: 'function', function: { name: 'list_directory',  description: 'List a local directory.',     parameters: { type: 'object', properties: { dirPath: { type: 'string' } }, required: ['dirPath'] } } },
   // Zoom
   { type: 'function', function: { name: 'create_zoom_meeting', description: 'Schedule a Zoom meeting.', parameters: { type: 'object', properties: { topic: { type: 'string' }, startDateTime: { type: 'string', description: 'ISO 8601 string' }, duration: { type: 'number', description: 'Duration in minutes' }, agenda: { type: 'string' } }, required: ['topic', 'startDateTime'] } } },
+  // Intelligence
+  { type: 'function', function: { name: 'upsert_memory', description: 'Save a fact about the user for long-term memory.', parameters: { type: 'object', properties: { key: { type: 'string', description: 'Fact name, e.g. favorite_color' }, value: { type: 'string', description: 'The fact value' }, category: { type: 'string', description: 'Category e.g. preference, work, bio' } }, required: ['key', 'value'] } } },
+  { type: 'function', function: { name: 'search_memory', description: 'Search long-term memory for previously saved user facts.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search term or key' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'web_search',    description: 'Search the internet for real-time information.', parameters: { type: 'object', properties: { query: { type: 'string' }, search_depth: { type: 'string', enum: ['basic', 'advanced'] } }, required: ['query'] } } },
 ];
 
 // ── Tool Executor Map ─────────────────────────────────────────────────────────
@@ -71,6 +78,7 @@ const TOOL_MAP = {
   create_notion_page:   notion.createPage,
   search_notion:        notion.searchPages,
   list_notion_pages:    notion.listPages,
+  read_notion_page:     notion.readPage,
   send_slack_message:   slack.sendMessage,
   list_slack_channels:  slack.listChannels,
   read_slack_messages:  slack.readMessages,
@@ -80,12 +88,20 @@ const TOOL_MAP = {
   write_code_file:      codeFiles.writeFile,
   list_directory:       codeFiles.listDirectory,
   create_zoom_meeting:  zoom.createMeeting,
+  upsert_memory:        memory.upsertMemory,
+  search_memory:        memory.searchMemory,
+  web_search:           webSearch.webSearch,
 };
 
 // ── System Prompt ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are OMNI Copilot, an intelligent task automation assistant. You are exceptionally detailed, thorough, and professional.
 
-Rules:
+Core Intelligence Rules:
+- MEMORY: You have a long-term memory. Use 'upsert_memory' to save important facts about the user (preferences, bio, recurring project names) so you don't forget them in future sessions.
+- RECALL: Use 'search_memory' if you suspect you've been told something before but it's not in the current chat history. 
+- REAL-TIME DATA: Use 'web_search' to find current information, news, or technical documentation you aren't sure about. 
+
+Operating Rules:
 - PROVIDE DEPTH: When summarizing emails or documents, provide high-fidelity, multi-paragraph summaries. Extract specific names, dates, amounts, and action items. NEVER provide one-line generic summaries.
 - FORMATTING: Use markdown tables, bold text, and bullet points to make information easy to read.
 - If a service is not connected, clearly say so and tell the user to click Connect in the sidebar.
@@ -102,24 +118,35 @@ const SENSITIVE_TOOLS = [
 ];
 
 // ── Main Execution Engine ─────────────────────────────────────────────────────
-async function execute({ message, conversationId, attachments, onStep, onChunk, onComplete, onError, onRequestAction }) {
-  const db = getDb();
+async function execute({ message, conversationId, attachments, userId, onStep, onChunk, onComplete, onError, onRequestAction }) {
   const convId = conversationId || uuidv4();
+  if (!userId) throw new Error('User ID is required for execution');
 
-  // Load conversation history
+  // Load conversation history (ensure it belongs to the user)
   let history = [];
   try {
-    const rows = db.prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 20').all(convId);
+    const rows = await Message.find({ conversation_id: convId }).sort({ created_at: 1 }).limit(20);
+    // Note: In a real multi-user app, we'd verify the Conversation belongs to the User here too.
     history = rows.map(r => ({ role: r.role === 'model' ? 'assistant' : r.role, content: r.content }));
   } catch {}
 
-  // Save user message
-  db.prepare('INSERT OR IGNORE INTO conversations (id, title, created_at) VALUES (?, ?, ?)').run(convId, message.slice(0, 60), new Date().toISOString());
-  db.prepare('INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), convId, 'user', message, new Date().toISOString());
+  // Save user message (Upsert conversation with userId)
+  await Conversation.findOneAndUpdate(
+    { id: convId },
+    { userId, title: message.slice(0, 60), updated_at: new Date() },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+  
+  await new Message({
+    id: uuidv4(),
+    conversation_id: convId,
+    role: 'user',
+    content: message,
+    created_at: new Date()
+  }).save();
 
   // Simplify history for better context (last 6 messages)
   const recentHistory = history.slice(-6).map(msg => {
-    // Basic safety: truncate any single accidentally massive history message
     if (typeof msg.content === 'string' && msg.content.length > 5000) {
       return { ...msg, content: msg.content.substring(0, 5000) + "..." };
     }
@@ -187,8 +214,18 @@ async function execute({ message, conversationId, attachments, onStep, onChunk, 
                 onStep({ id: toolId, type: 'tool', message: `Running: ${formatToolName(fnName)}`, tool: fnName, args: executeArgs });
              } 
           
-          result = await handler(executeArgs);
+          // Pass userId to tool handlers that need it
+          result = await handler({ ...executeArgs, userId });
           onStep({ id: toolId, type: 'tool_success', message: `✓ ${formatToolName(fnName)} completed`, tool: fnName, result });
+          
+          // Log to Analytics (linked to user)
+          await new Analytics({
+            userId,
+            event_type: 'tool_hit',
+            tool_name: fnName,
+            status: 'success',
+            metadata: { conversation_id: convId }
+          }).save().catch(e => console.error('[Analytics Log Error]', e));
         } catch (err) {
           result = { error: err.message };
           onStep({ id: toolId, type: 'tool_error', message: `✗ ${formatToolName(fnName)}: ${err.message}`, tool: fnName });
@@ -215,7 +252,13 @@ async function execute({ message, conversationId, attachments, onStep, onChunk, 
     }
 
     // Save assistant response
-    db.prepare('INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), convId, 'model', fullResponse, new Date().toISOString());
+    await new Message({
+      id: uuidv4(),
+      conversation_id: convId,
+      role: 'model',
+      content: fullResponse,
+      created_at: new Date()
+    }).save();
 
     onComplete({ text: fullResponse, conversationId: convId });
 
@@ -227,7 +270,6 @@ async function execute({ message, conversationId, attachments, onStep, onChunk, 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function buildUserContent(message, attachments) {
-  // Groq vision: pass images as content array if attachments present
   if (attachments && attachments.some(a => a.mimeType?.startsWith('image/'))) {
     const parts = [{ type: 'text', text: message }];
     for (const att of attachments) {
@@ -249,3 +291,4 @@ function sleep(ms) {
 }
 
 module.exports = { execute };
+

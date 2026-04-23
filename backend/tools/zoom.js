@@ -4,8 +4,8 @@ const zoomOAuth = require('../auth/zoomOAuth');
 /**
  * Zoom Tool Handlers
  */
-async function createMeeting({ topic, startDateTime, duration, agenda }) {
-  const token = await zoomOAuth.getAccessToken();
+async function createMeeting({ topic, startDateTime, duration, agenda, userId }) {
+  const token = await zoomOAuth.getAccessToken(userId);
 
   try {
     const response = await axios.post(

@@ -8,8 +8,8 @@ const TYPE_MAP = {
   SCALE: 'scaleQuestion',
 };
 
-async function createForm({ title, description, questions }) {
-  const auth = await getAuthenticatedClient();
+async function createForm({ title, description, questions, userId }) {
+  const auth = await getAuthenticatedClient(userId);
   const forms = google.forms({ version: 'v1', auth });
 
   // Parse questions

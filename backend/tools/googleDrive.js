@@ -1,8 +1,8 @@
 const { google } = require('googleapis');
 const { getAuthenticatedClient } = require('../auth/googleOAuth');
 
-async function listFiles({ query = '', maxResults = 20 } = {}) {
-  const auth = await getAuthenticatedClient();
+async function listFiles({ query = '', maxResults = 20, userId } = {}) {
+  const auth = await getAuthenticatedClient(userId);
   const drive = google.drive({ version: 'v3', auth });
   const q = query || "trashed = false";
   const res = await drive.files.list({
@@ -26,8 +26,8 @@ async function listFiles({ query = '', maxResults = 20 } = {}) {
   };
 }
 
-async function createFolder({ name, parentId } = {}) {
-  const auth = await getAuthenticatedClient();
+async function createFolder({ name, parentId, userId } = {}) {
+  const auth = await getAuthenticatedClient(userId);
   const drive = google.drive({ version: 'v3', auth });
   const fileMetadata = {
     name,
@@ -38,8 +38,8 @@ async function createFolder({ name, parentId } = {}) {
   return { success: true, id: res.data.id, name: res.data.name, link: res.data.webViewLink };
 }
 
-async function uploadFile({ name, content, mimeType = 'text/plain', folderId } = {}) {
-  const auth = await getAuthenticatedClient();
+async function uploadFile({ name, content, mimeType = 'text/plain', folderId, userId } = {}) {
+  const auth = await getAuthenticatedClient(userId);
   const drive = google.drive({ version: 'v3', auth });
   const { Readable } = require('stream');
   const stream = Readable.from([content]);

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import MessageBubble from './MessageBubble';
 import { useSocket } from '../hooks/useSocket';
+import { useAuth } from '../hooks/useAuth';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
@@ -26,9 +27,28 @@ export default function ChatWindow({ conversationId, onConversationStart }) {
   const activeConvId = useRef(conversationId || uuidv4());
   const streamingMsgId = useRef(null);
   const { sendMessage, on, off, socket } = useSocket();
+  const { getHeaders } = useAuth();
 
   useEffect(() => {
-    if (conversationId) activeConvId.current = conversationId;
+    if (conversationId) {
+      activeConvId.current = conversationId;
+      fetch(`${BACKEND_URL}/api/history/${conversationId}`, { headers: getHeaders() })
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data) && data.length > 0) {
+            const formatted = data.map(msg => ({
+              id: msg.id,
+              role: msg.role === 'model' ? 'assistant' : msg.role,
+              content: msg.content,
+              timestamp: msg.created_at,
+            }));
+            setMessages(formatted);
+          } else {
+            setMessages([]);
+          }
+        })
+        .catch(err => console.error('Failed to load history:', err));
+    }
   }, [conversationId]);
 
   // Socket event listeners
@@ -154,7 +174,11 @@ export default function ChatWindow({ conversationId, onConversationStart }) {
       const formData = new FormData();
       formData.append('file', file);
       try {
-        const res = await fetch(`${BACKEND_URL}/api/upload`, { method: 'POST', body: formData });
+        const res = await fetch(`${BACKEND_URL}/api/upload`, { 
+          method: 'POST', 
+          body: formData,
+          headers: { 'Authorization': getHeaders()['Authorization'] } // Filter out Content-Type for FormData
+        });
         const data = await res.json();
         setAttachments(prev => [...prev, { ...data, id: uuidv4() }]);
       } catch (e) { console.error('Upload failed', e); }
@@ -170,6 +194,41 @@ export default function ChatWindow({ conversationId, onConversationStart }) {
   const handleChip = (text) => {
     setInput(text);
     textareaRef.current?.focus();
+  };
+
+  // ── Voice-to-Task (STT) ───────────────────────────────────────────────────
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => setIsListening(true);
+      recognition.onend = () => setIsListening(false);
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(prev => (prev ? `${prev} ${transcript}` : transcript));
+      };
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error', event.error);
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      recognitionRef.current?.start();
+    }
   };
 
   const showWelcome = messages.length === 0;
@@ -259,6 +318,14 @@ export default function ChatWindow({ conversationId, onConversationStart }) {
               onClick={() => fileInputRef.current.click()}>📎</button>
             <button className="icon-btn" title="Upload image"
               onClick={() => { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click(); }}>🖼️</button>
+            <button 
+              className={`icon-btn ${isListening ? 'listening' : ''}`} 
+              title={isListening ? 'Listening...' : 'Voice to Task'}
+              onClick={toggleListening}
+              style={isListening ? { color: '#ff4b2b', animation: 'pulse 1.5s infinite' } : {}}
+            >
+              🎤
+            </button>
             <button className="send-btn" onClick={handleSend} disabled={isLoading || (!input.trim() && attachments.length === 0)}>
               {isLoading ? '⏳' : '➤'}
             </button>

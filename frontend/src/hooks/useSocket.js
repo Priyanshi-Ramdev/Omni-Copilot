@@ -10,7 +10,11 @@ export function useSocket() {
 
   useEffect(() => {
     if (!socketRef.current) {
-      socket = io(BACKEND_URL, { transports: ['websocket', 'polling'] });
+      const token = localStorage.getItem('omni_token');
+      socket = io(BACKEND_URL, { 
+        transports: ['websocket', 'polling'],
+        auth: { token }
+      });
       socketRef.current = socket;
     }
     return () => {

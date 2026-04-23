@@ -1,12 +1,13 @@
 const { WebClient } = require('@slack/web-api');
 const { getToken } = require('../auth/slackOAuth');
 
-function getClient() {
-  return new WebClient(getToken());
+async function getClient(userId) {
+  const token = await getToken(userId);
+  return new WebClient(token);
 }
 
-async function sendMessage({ channel, message, blocks }) {
-  const client = getClient();
+async function sendMessage({ channel, message, blocks, userId }) {
+  const client = await getClient(userId);
   const channelId = channel.startsWith('#') ? channel : channel;
   const payload = { channel: channelId, text: message };
   if (blocks) {
@@ -16,8 +17,8 @@ async function sendMessage({ channel, message, blocks }) {
   return { success: true, messageId: res.ts, channel: channelId, message, permalink: `https://slack.com/archives/${res.channel}/p${res.ts.replace('.', '')}` };
 }
 
-async function listChannels({ limit = 20 } = {}) {
-  const client = getClient();
+async function listChannels({ limit = 20, userId } = {}) {
+  const client = await getClient(userId);
   const res = await client.conversations.list({ limit, types: 'public_channel,private_channel' });
   const channels = (res.channels || []).map(c => ({
     id: c.id, name: `#${c.name}`, isPrivate: c.is_private,
@@ -26,8 +27,8 @@ async function listChannels({ limit = 20 } = {}) {
   return { success: true, count: channels.length, channels };
 }
 
-async function readMessages({ channel, limit = 20 }) {
-  const client = getClient();
+async function readMessages({ channel, limit = 20, userId }) {
+  const client = await getClient(userId);
   const res = await client.conversations.history({ channel, limit });
   const messages = (res.messages || []).map(m => ({
     text: m.text, ts: m.ts, user: m.user,

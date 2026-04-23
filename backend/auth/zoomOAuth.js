@@ -1,15 +1,17 @@
 const axios = require('axios');
-const { getDb } = require('../db/database');
+const { Token } = require('../db/database');
 
 /**
  * Generate Zoom Authorization URL for User OAuth
  * Scopes: meeting:write, user:read:ready
  */
-function getAuthUrl() {
+function getAuthUrl(state) {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: process.env.ZOOM_CLIENT_ID,
     redirect_uri: process.env.ZOOM_REDIRECT_URI,
+    scope: 'meeting:write user:read:ready',
+    state
   });
   return `https://zoom.us/oauth/authorize?${params.toString()}`;
 }
@@ -17,7 +19,8 @@ function getAuthUrl() {
 /**
  * Handle OAuth Token Exchange (Code for Tokens)
  */
-async function handleCallback(code) {
+async function handleCallback(code, userId) {
+  if (!userId) throw new Error('User ID is required for Zoom OAuth');
   const authHeader = Buffer.from(
     `${process.env.ZOOM_CLIENT_ID}:${process.env.ZOOM_CLIENT_SECRET}`
   ).toString('base64');
@@ -38,11 +41,16 @@ async function handleCallback(code) {
     const { access_token, refresh_token, expires_in } = response.data;
     const expiry = Date.now() + (expires_in * 1000);
 
-    const db = getDb();
-    db.prepare(`
-      INSERT OR REPLACE INTO tokens (service, access_token, refresh_token, token_expiry, connected_at)
-      VALUES ('zoom', ?, ?, ?, datetime('now'))
-    `).run(access_token, refresh_token, expiry);
+    await Token.findOneAndUpdate(
+      { service: 'zoom', userId },
+      {
+        access_token,
+        refresh_token: refresh_token || undefined,
+        token_expiry: expiry,
+        connected_at: new Date()
+      },
+      { upsert: true, new: true }
+    );
 
     return response.data;
   } catch (err) {
@@ -54,9 +62,9 @@ async function handleCallback(code) {
 /**
  * Get Authenticated Access Token with Auto-refresh
  */
-async function getAccessToken() {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM tokens WHERE service = 'zoom'").get();
+async function getAccessToken(userId) {
+  if (!userId) throw new Error('User ID is required to get Zoom access token');
+  const row = await Token.findOne({ service: 'zoom', userId });
 
   if (!row) {
     throw new Error('Zoom account not connected. Please connect Zoom in the sidebar.');
@@ -64,7 +72,7 @@ async function getAccessToken() {
 
   // Auto-refresh if expired or near expiry (60s buffer)
   if (row.token_expiry && Date.now() > (row.token_expiry - 60000)) {
-    return refreshAccessToken(row.refresh_token);
+    return refreshAccessToken(row.refresh_token, userId);
   }
 
   return row.access_token;
@@ -73,7 +81,7 @@ async function getAccessToken() {
 /**
  * Internally refresh the access token using the refresh token
  */
-async function refreshAccessToken(refreshToken) {
+async function refreshAccessToken(refreshToken, userId) {
   const authHeader = Buffer.from(
     `${process.env.ZOOM_CLIENT_ID}:${process.env.ZOOM_CLIENT_SECRET}`
   ).toString('base64');
@@ -93,12 +101,10 @@ async function refreshAccessToken(refreshToken) {
     const { access_token, refresh_token, expires_in } = response.data;
     const expiry = Date.now() + (expires_in * 1000);
 
-    const db = getDb();
-    db.prepare(`
-      UPDATE tokens 
-      SET access_token = ?, refresh_token = ?, token_expiry = ? 
-      WHERE service = 'zoom'
-    `).run(access_token, refresh_token, expiry);
+    await Token.updateOne(
+      { service: 'zoom', userId },
+      { access_token, refresh_token, token_expiry: expiry }
+    );
 
     return access_token;
   } catch (err) {
@@ -108,3 +114,4 @@ async function refreshAccessToken(refreshToken) {
 }
 
 module.exports = { getAuthUrl, handleCallback, getAccessToken };
+

@@ -48,7 +48,7 @@ export default function MessageBubble({ message, onActionRespond }) {
 
         {/* Action Review Form */}
         {!isUser && pendingAction && onActionRespond && (
-            <ActionReviewCard action={pendingAction} onRespond={onActionRespond} />
+            <ActionReviewCard key={pendingAction.id} action={pendingAction} onRespond={onActionRespond} />
         )}
 
         <span className="msg-time">{formatTime(timestamp)}</span>

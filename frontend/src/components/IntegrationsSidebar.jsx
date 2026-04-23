@@ -4,13 +4,11 @@ const INTEGRATIONS = [
   { key: 'google', name: 'Google', icon: '🔵', desc: 'Drive, Docs, Gmail, Calendar, Meet, Forms', color: '#4285F4', oauthKey: 'google' },
   { key: 'notion', name: 'Notion', icon: '⬛', desc: 'Pages & Databases', color: '#ffffff', oauthKey: 'notion' },
   { key: 'slack',  name: 'Slack',  icon: '💬', desc: 'Channels & Messages', color: '#4A154B', oauthKey: 'slack' },
-  { key: 'discord',name: 'Discord',icon: '🎮', desc: 'Alerts & Messages', color: '#5865F2', oauthKey: 'discord' },
   { key: 'zoom',   name: 'Zoom',   icon: '📹', desc: 'Meetings & Scheduling', color: '#2D8CFF', oauthKey: 'zoom' },
-  { key: 'teams',  name: 'Teams',  icon: '💼', desc: 'Messages (coming soon)', color: '#6264A7', oauthKey: null },
 ];
 
 export default function IntegrationsSidebar({ history, onNewChat, onSelectHistory }) {
-  const { connected, connectService, isConnected } = useAuth();
+  const { user, connected, logout, connectService, isConnected } = useAuth();
 
   return (
     <aside className="sidebar">
@@ -20,6 +18,26 @@ export default function IntegrationsSidebar({ history, onNewChat, onSelectHistor
         <div className="logo-text">
           <span className="logo-name">OMNI Copilot</span>
           <span className="logo-sub">Task Automation</span>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <div className="sidebar-section">
+        <div 
+          className="nav-item" 
+          onClick={() => window.location.hash = '#chat'}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '8px', transition: 'all 0.2s' }}
+        >
+          <span style={{ fontSize: '18px' }}>💬</span>
+          <span style={{ fontWeight: 500 }}>Chat Interface</span>
+        </div>
+        <div 
+          className="nav-item" 
+          onClick={() => window.location.hash = '#dashboard'}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '8px', transition: 'all 0.2s', marginTop: '4px' }}
+        >
+          <span style={{ fontSize: '18px' }}>📊</span>
+          <span style={{ fontWeight: 500 }}>Analytics Dashboard</span>
         </div>
       </div>
 
@@ -64,6 +82,20 @@ export default function IntegrationsSidebar({ history, onNewChat, onSelectHistor
             <div className="history-time">{formatTime(h.created_at)}</div>
           </div>
         ))}
+      </div>
+
+      {/* User Profile */}
+      <div className="sidebar-section user-section">
+        <div className="user-profile">
+          <div className="user-avatar">{user?.name?.charAt(0) || 'U'}</div>
+          <div className="user-info">
+            <div className="user-name">{user?.name || 'User'}</div>
+            <div className="user-email">{user?.email || ''}</div>
+          </div>
+          <button className="logout-icon-btn" onClick={logout} title="Logout">
+            🚪
+          </button>
+        </div>
       </div>
 
       {/* New Chat */}

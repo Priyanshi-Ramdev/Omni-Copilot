@@ -1,15 +1,27 @@
 const { Client } = require('@notionhq/client');
 const { getToken } = require('../auth/notionOAuth');
 
-function getClient() {
-  return new Client({ auth: getToken() });
+async function getClient(userId) {
+  const token = await getToken(userId);
+  return new Client({ auth: token });
 }
 
-async function createPage({ title, content, parentPageId }) {
-  const notion = getClient();
-  const parent = parentPageId
-    ? { type: 'page_id', page_id: parentPageId }
-    : { type: 'workspace' };
+async function createPage({ title, content, parentPageId, userId }) {
+  const notion = await getClient(userId);
+  let parent;
+  if (parentPageId) {
+    parent = { type: 'page_id', page_id: parentPageId };
+  } else {
+    // Public OAuth integrations cannot create top-level workspace pages.
+    // Find the first accessible page to use as the parent default.
+    const res = await notion.search({ filter: { property: 'object', value: 'page' }, page_size: 1 });
+    if (res.results && res.results.length > 0) {
+      parent = { type: 'page_id', page_id: res.results[0].id };
+    } else {
+      // Fallback that might only work for internal integrations
+      parent = { type: 'workspace', workspace: true };
+    }
+  }
 
   // Convert markdown-like content to Notion blocks
   const blocks = contentToBlocks(content);
@@ -25,8 +37,8 @@ async function createPage({ title, content, parentPageId }) {
   };
 }
 
-async function searchPages({ query }) {
-  const notion = getClient();
+async function searchPages({ query, userId }) {
+  const notion = await getClient(userId);
   const res = await notion.search({ query, page_size: 10 });
   const results = res.results.map(r => ({
     id: r.id, type: r.object,
@@ -37,8 +49,8 @@ async function searchPages({ query }) {
   return { success: true, count: results.length, results };
 }
 
-async function listPages({ limit = 10 } = {}) {
-  const notion = getClient();
+async function listPages({ limit = 10, userId } = {}) {
+  const notion = await getClient(userId);
   const res = await notion.search({ filter: { property: 'object', value: 'page' }, page_size: limit, sort: { direction: 'descending', timestamp: 'last_edited_time' } });
   const pages = res.results.map(r => ({
     id: r.id,
@@ -68,4 +80,21 @@ function contentToBlocks(content) {
   return blocks.slice(0, 100); // Notion API limit
 }
 
-module.exports = { createPage, searchPages, listPages };
+async function readPage({ pageId, userId }) {
+  const notion = await getClient(userId);
+  const res = await notion.blocks.children.list({ block_id: pageId, page_size: 100 });
+  
+  let content = '';
+  for (const block of res.results) {
+    if (block.type === 'paragraph' && block.paragraph.rich_text.length) {
+      content += block.paragraph.rich_text.map(t => t.plain_text).join('') + '\n';
+    } else if (block.type.startsWith('heading') && block[block.type].rich_text.length) {
+      content += '# ' + block[block.type].rich_text.map(t => t.plain_text).join('') + '\n';
+    } else if (block.type.includes('list_item') && block[block.type].rich_text.length) {
+      content += '- ' + block[block.type].rich_text.map(t => t.plain_text).join('') + '\n';
+    }
+  }
+  return { success: true, pageId, textContent: content || '(empty page or no supported text blocks)' };
+}
+
+module.exports = { createPage, searchPages, listPages, readPage };

@@ -1,8 +1,8 @@
 const { google } = require('googleapis');
 const { getAuthenticatedClient } = require('../auth/googleOAuth');
 
-async function createEvent({ title, description, startDateTime, endDateTime, attendees, location }) {
-  const auth = await getAuthenticatedClient();
+async function createEvent({ title, description, startDateTime, endDateTime, attendees, location, userId }) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
   const attendeeList = attendees ? attendees.split(',').map(e => ({ email: e.trim() })) : [];
   const event = {
@@ -23,8 +23,8 @@ async function createEvent({ title, description, startDateTime, endDateTime, att
   };
 }
 
-async function listEvents({ maxResults = 10, timeMin, timeMax } = {}) {
-  const auth = await getAuthenticatedClient();
+async function listEvents({ maxResults = 10, timeMin, timeMax, userId } = {}) {
+  const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
   const res = await calendar.events.list({
     calendarId: 'primary',

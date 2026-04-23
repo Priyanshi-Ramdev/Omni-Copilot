@@ -1,5 +1,5 @@
 const { google } = require('googleapis');
-const { getDb } = require('../db/database');
+const { Token } = require('../db/database');
 
 function getOAuth2Client() {
   return new google.auth.OAuth2(
@@ -9,11 +9,12 @@ function getOAuth2Client() {
   );
 }
 
-function getAuthUrl() {
+function getAuthUrl(state) {
   const oauth2Client = getOAuth2Client();
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
+    state,
     scope: [
       'https://www.googleapis.com/auth/drive',
       'https://www.googleapis.com/auth/documents',
@@ -26,20 +27,28 @@ function getAuthUrl() {
   });
 }
 
-async function handleCallback(code) {
+async function handleCallback(code, userId) {
+  if (!userId) throw new Error('User ID is required for Google OAuth');
   const oauth2Client = getOAuth2Client();
   const { tokens } = await oauth2Client.getToken(code);
-  const db = getDb();
-  db.prepare(`
-    INSERT OR REPLACE INTO tokens (service, access_token, refresh_token, token_expiry, connected_at)
-    VALUES ('google', ?, ?, ?, datetime('now'))
-  `).run(tokens.access_token, tokens.refresh_token || null, tokens.expiry_date || null);
+  
+  await Token.findOneAndUpdate(
+    { service: 'google', userId },
+    {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token || undefined,
+      token_expiry: tokens.expiry_date || undefined,
+      connected_at: new Date()
+    },
+    { upsert: true, new: true }
+  );
+  
   return tokens;
 }
 
-async function getAuthenticatedClient() {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM tokens WHERE service = 'google'").get();
+async function getAuthenticatedClient(userId) {
+  if (!userId) throw new Error('User ID is required to get authenticated Google client');
+  const row = await Token.findOne({ service: 'google', userId });
   if (!row) throw new Error('Google account not connected. Please connect Google at /auth/google');
 
   const oauth2Client = getOAuth2Client();
@@ -50,10 +59,12 @@ async function getAuthenticatedClient() {
   });
 
   // Auto-refresh if needed
-  oauth2Client.on('tokens', (tokens) => {
+  oauth2Client.on('tokens', async (tokens) => {
     if (tokens.access_token) {
-      db.prepare("UPDATE tokens SET access_token = ?, token_expiry = ? WHERE service = 'google'")
-        .run(tokens.access_token, tokens.expiry_date);
+      await Token.updateOne(
+        { service: 'google', userId },
+        { access_token: tokens.access_token, token_expiry: tokens.expiry_date }
+      );
     }
   });
 
@@ -61,3 +72,4 @@ async function getAuthenticatedClient() {
 }
 
 module.exports = { getAuthUrl, handleCallback, getAuthenticatedClient };
+

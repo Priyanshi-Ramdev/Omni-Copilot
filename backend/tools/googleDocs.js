@@ -1,8 +1,8 @@
 const { google } = require('googleapis');
 const { getAuthenticatedClient } = require('../auth/googleOAuth');
 
-async function createDoc({ title, content }) {
-  const auth = await getAuthenticatedClient();
+async function createDoc({ title, content, userId }) {
+  const auth = await getAuthenticatedClient(userId);
   const docs = google.docs({ version: 'v1', auth });
   const drive = google.drive({ version: 'v3', auth });
 
@@ -31,8 +31,8 @@ async function createDoc({ title, content }) {
   };
 }
 
-async function readDoc({ documentId, name }) {
-  const auth = await getAuthenticatedClient();
+async function readDoc({ documentId, name, userId }) {
+  const auth = await getAuthenticatedClient(userId);
   const docs = google.docs({ version: 'v1', auth });
   const drive = google.drive({ version: 'v3', auth });
 
